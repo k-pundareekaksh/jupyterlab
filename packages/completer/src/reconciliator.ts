@@ -22,6 +22,28 @@ export type InlineResult =
   IInlineCompletionList<CompletionHandler.IInlineItem> | null;
 
 /**
+ * Helper function to add timeout to a promise and clear the timer when done.
+ * This prevents dangling timers when the promise resolves early.
+ */
+function promiseWithTimeout<T>(
+  promise: Promise<T>,
+  ms: number,
+  label?: string
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  const timeout = new Promise<T>((_, reject) => {
+    timer = setTimeout(() => {
+      reject(new Error(`Timed out after ${ms}ms${label ? ` (${label})` : ''}`));
+    }, ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => {
+    if (timer) {
+      clearTimeout(timer);
+    }
+  });
+}
+
+/**
  * The reconciliator which is used to fetch and merge responses from multiple completion providers.
  */
 export class ProviderReconciliator implements IProviderReconciliator {
@@ -33,7 +55,7 @@ export class ProviderReconciliator implements IProviderReconciliator {
     this._inlineProviders = options.inlineProviders ?? [];
     this._inlineProvidersSettings = options.inlineProvidersSettings ?? {};
     this._context = options.context;
-    this._timeout = options.timeout;
+    this._timeout = options.timeout ?? 2000;
   }
 
   /**
@@ -42,11 +64,42 @@ export class ProviderReconciliator implements IProviderReconciliator {
    * @return  List of applicable providers
    */
   protected async applicableProviders(): Promise<Array<ICompletionProvider>> {
-    const isApplicablePromises = this._providers.map(p =>
-      p.isApplicable(this._context)
-    );
-    const applicableProviders = await Promise.all(isApplicablePromises);
-    return this._providers.filter((_, idx) => applicableProviders[idx]);
+    type ApplicabilityResult =
+      | { status: 'fulfilled'; value: boolean }
+      | { status: 'rejected'; reason: any };
+
+    const applicabilityChecks = this._providers.map((p, idx) => {
+      return promiseWithTimeout(
+        p.isApplicable(this._context),
+        this._timeout,
+        `provider#${idx}`
+      )
+        .then(value => ({
+          status: 'fulfilled' as const,
+          value: Boolean(value)
+        }))
+        .catch(error => {
+          const id =
+            (p as any).identifier ?? p.constructor?.name ?? `provider#${idx}`;
+          console.error(
+            `[completer] isApplicable() failed for provider ${id}:`,
+            error
+          );
+          return { status: 'rejected' as const, reason: error };
+        });
+    });
+    // Use Promise.all since we've already handled rejections above
+    // This is equivalent to Promise.allSettled but compatible with ES2018
+    const results = await Promise.all(applicabilityChecks);
+    return this._providers.filter((_, idx) => {
+      const result = results[idx] as ApplicabilityResult;
+      if (result.status === 'fulfilled') {
+        return result.value === true;
+      } else {
+        // Promise was rejected (caught above)
+        return false;
+      }
+    });
   }
 
   fetchInline(
