@@ -61,4 +61,4 @@ https://github.com/jupyterlab/jupyterlab/issues/15441
 
 ## Commit Hash
 
-_To be added: Commit hash after the fix is committed to the repository_
+8e00ff2b42150d2af21267cc47a4d10e5fa5f45e
