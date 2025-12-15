@@ -21,10 +21,6 @@ import { isHintableMimeType } from './utils';
 export type InlineResult =
   IInlineCompletionList<CompletionHandler.IInlineItem> | null;
 
-/**
- * Helper function to add timeout to a promise and clear the timer when done.
- * This prevents dangling timers when the promise resolves early.
- */
 function promiseWithTimeout<T>(
   promise: Promise<T>,
   ms: number,
